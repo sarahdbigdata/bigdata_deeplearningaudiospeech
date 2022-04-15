@@ -1,0 +1,189 @@
+After https://colab.research.google.com/github/tugstugi/pytorch-dc-tts/blob/master/notebooks/EnglishTTS.ipynb
+
+!pip install wget
+Requirement already satisfied: wget in /usr/local/lib/python3.6/dist-packages (3.2)
+Deep Convolutional Networks with Guided Attention
+from os.path import exists
+
+if not exists('pytorch-dc-tts'):
+    !git clone --quiet https://github.com/tugstugi/pytorch-dc-tts
+    !cd pytorch-dc-tts && pip install -q -r requirements.txt
+!rm *.pth
+import wget
+
+# download text2mel
+if not exists("ljspeech-text2mel.pth"):
+  ! wget -q -O ljspeech-text2mel.pth https://www.dropbox.com/s/4t13ugxzzgnocbj/step-300K.pth
+
+# download SSRN
+if not exists("ljspeech-ssrn.pth"):
+  ! wget -q -O ljspeech-ssrn.pth https://www.dropbox.com/s/gw4aqrgcvccmg0g/step-100K.pth
+import sys
+sys.path.append('pytorch-dc-tts')
+
+import warnings
+warnings.filterwarnings("ignore")  # ignore warnings in this notebook
+
+import numpy as np
+import torch
+
+from tqdm import *
+import IPython
+from IPython.display import Audio
+
+from hparams import HParams as hp
+from audio import save_to_wav
+from models import Text2Mel, SSRN
+from datasets.lj_speech import vocab, idx2char, get_test_data
+torch.set_grad_enabled(False)
+text2mel = Text2Mel(vocab)
+text2mel.load_state_dict(torch.load("ljspeech-text2mel.pth").state_dict())
+text2mel = text2mel.eval()
+ssrn = SSRN()
+ssrn.load_state_dict(torch.load("ljspeech-ssrn.pth").state_dict())
+ssrn = ssrn.eval()
+SENTENCES = [
+  'The horse raced past the barn fell.',
+  'The old man the boat.',
+  'The florist sent the flowers was pleased.',
+  'The cotton clothing is made of grows in Mississippi.',
+  'The sour drink from the ocean.',
+  'Have the students who failed the exam take the supplementary.',
+  'We painted the wall with cracks.',
+  'The girl told the story cried.',
+  'The raft floated down the river sank.',
+  'Fat people eat accumulates.'
+]
+# synthetize by one by one because there is a batch processing bug!
+for i in range(len(SENTENCES)):
+    sentence = SENTENCES[i]
+    normalized_sentence = "".join([c if c.lower() in vocab else '' for c in sentence])
+    print(normalized_sentence)
+    
+    sentences = [normalized_sentence]
+    max_N = len(normalized_sentence)
+    L = torch.from_numpy(get_test_data(sentences, max_N))
+    zeros = torch.from_numpy(np.zeros((1, hp.n_mels, 1), np.float32))
+    Y = zeros
+    A = None
+
+    for t in range(hp.max_T):
+      _, Y_t, A = text2mel(L, Y, monotonic_attention=True)
+      Y = torch.cat((zeros, Y_t), -1)
+      _, attention = torch.max(A[0, :, -1], 0)
+      attention = attention.item()
+      if L[0, attention] == vocab.index('E'):  # EOS
+          break
+
+    _, Z = ssrn(Y)
+    
+    Z = Z.cpu().detach().numpy()
+    save_to_wav(Z[0, :, :].T, '%d.wav' % (i + 1))
+    IPython.display.display(Audio('%d.wav' % (i + 1), rate=hp.sr))
+The horse raced past the barn fell.
+The old man the boat.
+The florist sent the flowers was pleased.
+The cotton clothing is made of grows in Mississippi.
+The sour drink from the ocean.
+Have the students who failed the exam take the supplementary.
+We painted the wall with cracks.
+The girl told the story cried.
+The raft floated down the river sank.
+Fat people eat accumulates.
+WaveGAN
+import wget
+
+wget.download(
+  'https://s3.amazonaws.com/wavegan-v1/models/timit.ckpt.index',
+  'model.ckpt.index'
+)
+wget.download(
+  'https://s3.amazonaws.com/wavegan-v1/models/timit.ckpt.data-00000-of-00001',
+  'model.ckpt.data-00000-of-00001')
+wget.download(
+  'https://s3.amazonaws.com/wavegan-v1/models/timit_infer.meta',
+  'infer.meta'
+);
+# need to downgrade tensorflow for this part:
+!pip install 'tensorflow==1.4'
+Collecting tensorflow==1.4
+  Downloading https://files.pythonhosted.org/packages/86/9f/be0165c6eefd841e6928e54d3d083fa174f92d640fdc52f73a33dc9c54d1/tensorflow-1.4.0-cp36-cp36m-manylinux1_x86_64.whl (41.2MB)
+     |████████████████████████████████| 41.2MB 74kB/s 
+Requirement already satisfied: six>=1.10.0 in /usr/local/lib/python3.6/dist-packages (from tensorflow==1.4) (1.15.0)
+Requirement already satisfied: protobuf>=3.3.0 in /usr/local/lib/python3.6/dist-packages (from tensorflow==1.4) (3.12.4)
+Requirement already satisfied: numpy>=1.12.1 in /usr/local/lib/python3.6/dist-packages (from tensorflow==1.4) (1.19.2)
+Collecting enum34>=1.1.6
+  Downloading https://files.pythonhosted.org/packages/63/f6/ccb1c83687756aeabbf3ca0f213508fcfb03883ff200d201b3a4c60cedcc/enum34-1.1.10-py3-none-any.whl
+Collecting tensorflow-tensorboard<0.5.0,>=0.4.0rc1
+  Downloading https://files.pythonhosted.org/packages/e9/9f/5845c18f9df5e7ea638ecf3a272238f0e7671e454faa396b5188c6e6fc0a/tensorflow_tensorboard-0.4.0-py3-none-any.whl (1.7MB)
+     |████████████████████████████████| 1.7MB 49.3MB/s 
+Requirement already satisfied: wheel>=0.26 in /usr/local/lib/python3.6/dist-packages (from tensorflow==1.4) (0.35.1)
+Requirement already satisfied: setuptools in /usr/local/lib/python3.6/dist-packages (from protobuf>=3.3.0->tensorflow==1.4) (50.3.2)
+Collecting html5lib==0.9999999
+  Downloading https://files.pythonhosted.org/packages/ae/ae/bcb60402c60932b32dfaf19bb53870b29eda2cd17551ba5639219fb5ebf9/html5lib-0.9999999.tar.gz (889kB)
+     |████████████████████████████████| 890kB 46.7MB/s 
+Collecting bleach==1.5.0
+  Downloading https://files.pythonhosted.org/packages/33/70/86c5fec937ea4964184d4d6c4f0b9551564f821e1c3575907639036d9b90/bleach-1.5.0-py2.py3-none-any.whl
+Requirement already satisfied: werkzeug>=0.11.10 in /usr/local/lib/python3.6/dist-packages (from tensorflow-tensorboard<0.5.0,>=0.4.0rc1->tensorflow==1.4) (1.0.1)
+Requirement already satisfied: markdown>=2.6.8 in /usr/local/lib/python3.6/dist-packages (from tensorflow-tensorboard<0.5.0,>=0.4.0rc1->tensorflow==1.4) (3.2.2)
+Requirement already satisfied: importlib-metadata; python_version < "3.8" in /usr/local/lib/python3.6/dist-packages (from markdown>=2.6.8->tensorflow-tensorboard<0.5.0,>=0.4.0rc1->tensorflow==1.4) (2.0.0)
+Requirement already satisfied: zipp>=0.5 in /usr/local/lib/python3.6/dist-packages (from importlib-metadata; python_version < "3.8"->markdown>=2.6.8->tensorflow-tensorboard<0.5.0,>=0.4.0rc1->tensorflow==1.4) (3.2.0)
+Building wheels for collected packages: html5lib
+  Building wheel for html5lib (setup.py) ... done
+  Created wheel for html5lib: filename=html5lib-0.9999999-cp36-none-any.whl size=107220 sha256=179afada852986e9aa696374ac108705b83434acc012f1dd43c202e16a6478c6
+  Stored in directory: /root/.cache/pip/wheels/50/ae/f9/d2b189788efcf61d1ee0e36045476735c838898eef1cad6e29
+Successfully built html5lib
+Installing collected packages: enum34, html5lib, bleach, tensorflow-tensorboard, tensorflow
+  Found existing installation: html5lib 1.0.1
+    Uninstalling html5lib-1.0.1:
+      Successfully uninstalled html5lib-1.0.1
+  Found existing installation: bleach 3.2.1
+    Uninstalling bleach-3.2.1:
+      Successfully uninstalled bleach-3.2.1
+  Found existing installation: tensorflow 2.0.0a0
+    Uninstalling tensorflow-2.0.0a0:
+      Successfully uninstalled tensorflow-2.0.0a0
+Successfully installed bleach-1.5.0 enum34-1.1.10 html5lib-0.9999999 tensorflow-1.4.0 tensorflow-tensorboard-0.4.0
+import tensorflow as tf
+
+tf.reset_default_graph()
+saver = tf.train.import_meta_graph('infer.meta')
+graph = tf.get_default_graph()
+sess = tf.InteractiveSession()
+saver.restore(sess, 'model.ckpt')
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:469: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  _np_qint8 = np.dtype([("qint8", np.int8, 1)])
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:470: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  _np_quint8 = np.dtype([("quint8", np.uint8, 1)])
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:471: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  _np_qint16 = np.dtype([("qint16", np.int16, 1)])
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:472: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  _np_quint16 = np.dtype([("quint16", np.uint16, 1)])
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:473: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  _np_qint32 = np.dtype([("qint32", np.int32, 1)])
+/usr/local/lib/python3.6/dist-packages/tensorflow/python/framework/dtypes.py:476: FutureWarning: Passing (type, 1) or '1type' as a synonym of type is deprecated; in a future version of numpy, it will be understood as (type, (1,)) / '(1,)type'.
+  np_resource = np.dtype([("resource", np.ubyte, 1)])
+/usr/lib/python3.6/importlib/_bootstrap.py:219: RuntimeWarning: compiletime version 3.5 of module 'tensorflow.python.framework.fast_tensor_util' does not match runtime version 3.6
+  return f(*args, **kwds)
+INFO:tensorflow:Restoring parameters from model.ckpt
+import numpy as np
+import PIL.Image
+from IPython.display import display, Audio
+import time as time
+
+# Sample latent vectors
+_z = (np.random.rand(2, 100) * 2.) - 1.
+
+# Generate
+z = graph.get_tensor_by_name('z:0')
+G_z = graph.get_tensor_by_name('G_z:0')[:, :, 0]
+G_z_spec = graph.get_tensor_by_name('G_z_spec:0')
+
+start = time.time()
+_G_z, _G_z_spec = sess.run([G_z, G_z_spec], {z: _z})
+print('Finished! (Took {} seconds)'.format(time.time() - start))
+
+for i in range(2):
+    display(Audio(_G_z[i], rate=16000))
+Finished! (Took 0.41141462326049805 seconds)
+ 
